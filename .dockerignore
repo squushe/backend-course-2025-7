@@ -1,4 +1,7 @@
 node_modules
 .gitignore
 Dockerfile
+compose.yml
+.env
 .dockerignore
+init.sql
