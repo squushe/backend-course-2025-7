@@ -1,0 +1,222 @@
+{
+	"info": {
+		"_postman_id": "11a9a124-9e50-44ba-bbdf-7684316a2c5c",
+		"name": "Lab7",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "50105694",
+		"_collection_link": "https://maksymrozhko-6112811.postman.co/workspace/Maksym's-Workspace~d43540cb-8318-4c4d-858a-dd171c7e95aa/collection/50105694-11a9a124-9e50-44ba-bbdf-7684316a2c5c?action=share&source=collection_link&creator=50105694"
+	},
+	"item": [
+		{
+			"name": "Create new item",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "inventory_name",
+							"value": "Ноутбук",
+							"type": "text"
+						},
+						{
+							"key": "description",
+							"value": "Потужний ігровий ноутбук",
+							"type": "text"
+						},
+						{
+							"key": "photo",
+							"type": "file",
+							"src": "/C:/Users/Maks/Downloads/wallpaperflare.com_wallpaper.jpg"
+						}
+					]
+				},
+				"url": {
+					"raw": "http://localhost:3000/register",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"register"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get inventory",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:3000/inventory",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"inventory"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get item by id",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:3000/inventory/0620c464-7c48-4747-b92b-f1288e247dcc",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"inventory",
+						"0620c464-7c48-4747-b92b-f1288e247dcc"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Update info",
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"inventory_name\": \"Ноутбук Pro\",\r\n  \"description\": \"Оновлений опис товару\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:3000/inventory/0620c464-7c48-4747-b92b-f1288e247dcc",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"inventory",
+						"0620c464-7c48-4747-b92b-f1288e247dcc"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Update photo",
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "photo",
+							"type": "file",
+							"src": "/C:/Users/Maks/Downloads/text.png"
+						}
+					]
+				},
+				"url": {
+					"raw": "http://localhost:3000/inventory/0620c464-7c48-4747-b92b-f1288e247dcc/photo",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"inventory",
+						"0620c464-7c48-4747-b92b-f1288e247dcc",
+						"photo"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get photo",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:3000/inventory/0620c464-7c48-4747-b92b-f1288e247dcc/photo",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"inventory",
+						"0620c464-7c48-4747-b92b-f1288e247dcc",
+						"photo"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Search item",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"id\": \"0620c464-7c48-4747-b92b-f1288e247dcc\",\r\n  \"has_photo\": true\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:3000/search",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"search"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Delete item",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"inventory_name\": \"Ноутбук Pro\",\r\n  \"description\": \"Оновлений опис товару\"\r\n}"
+				},
+				"url": {
+					"raw": "http://localhost:3000/inventory/0620c464-7c48-4747-b92b-f1288e247dcc",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "3000",
+					"path": [
+						"inventory",
+						"0620c464-7c48-4747-b92b-f1288e247dcc"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
