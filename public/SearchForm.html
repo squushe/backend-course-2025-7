@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Пошук речі</title>
+  </head>
+  <body>
+    <h1>Форма пошуку інвентаря</h1>
+    <form action="/search" method="POST">
+      <div>
+        <label for="id">Введіть ID або серійний номер:</label><br />
+        <input type="text" id="id" name="id" required />
+      </div>
+      <br />
+      <div>
+        <input type="checkbox" id="has_photo" name="has_photo" />
+        <label for="has_photo">Додати посилання на фото до опису</label>
+      </div>
+      <br />
+      <button type="submit">Знайти</button>
+    </form>
+  </body>
+</html>
