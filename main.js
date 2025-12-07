@@ -6,14 +6,21 @@ const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const swaggerJsDoc = require("swagger-jsdoc");
 const swaggerUi = require("swagger-ui-express");
+const mysql = require("mysql2/promise");
+require("dotenv").config();
 
 program
-  .requiredOption("-H, --host <host>")
-  .requiredOption("-p, --port <port>")
-  .requiredOption("-c, --cache <path>");
+  .option("-H, --host <host>", "Server host", process.env.HOST || "0.0.0.0")
+  .option("-p, --port <port>", "Server port", process.env.PORT || 3000)
+  .option(
+    "-c, --cache <path>",
+    "Cache directory",
+    process.env.CACHE_PATH || "cache"
+  );
 
 program.parse();
 const options = program.opts();
+
 const app = express();
 const port = options.port;
 
@@ -21,66 +28,76 @@ app.use(express.static(path.join(__dirname, "public")));
 
 if (!fs.existsSync(options.cache)) {
   fs.mkdirSync(options.cache, { recursive: true });
-  console.log("Директорію створено");
 }
 
-const dbPath = path.join(options.cache, "data.json");
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+});
+
+async function connectWithRetry() {
+  const maxRetries = 5;
+  let retries = 0;
+
+  while (retries < maxRetries) {
+    try {
+      const conn = await pool.getConnection();
+      console.log("Connected to MySQL");
+      conn.release();
+      return;
+    } catch (err) {
+      retries += 1;
+      console.error(`MySQL error (${retries}/${maxRetries}):`, err.code);
+      if (retries < maxRetries) {
+        await new Promise((res) => setTimeout(res, 5000));
+      }
+    }
+  }
+}
+
+connectWithRetry();
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, options.cache);
   },
   filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
-    );
+    const suffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, file.fieldname + "-" + suffix + path.extname(file.originalname));
   },
 });
-
-const upload = multer({ storage: storage });
-
-function readData() {
-  if (!fs.existsSync(dbPath)) return [];
-  const data = fs.readFileSync(dbPath);
-  return JSON.parse(data);
-}
-
-function writeData(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-}
+const upload = multer({ storage });
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Конфігурація Swagger
 const swaggerOptions = {
-  swaggerDefinition: {
+  definition: {
     openapi: "3.0.0",
     info: {
       title: "Inventory Service API",
       version: "1.0.0",
-      description: "API for invetory service",
     },
-    servers: [
-      {
-        url: `http://${options.host}:${options.port}`,
-      },
-    ],
+    servers: [{ url: `http://${options.host}:${options.port}` }],
   },
-  apis: ["./main.js"],
+  apis: [__filename],
 };
 
 const swaggerDocs = swaggerJsDoc(swaggerOptions);
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
 /**
- * @swagger
+ * @openapi
  * /register:
  *   post:
+ *     tags:
+ *       - Inventory
  *     summary: Register a new inventory item
- *     tags: [Inventory]
  *     requestBody:
  *       required: true
  *       content:
@@ -90,58 +107,56 @@ app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocs));
  *             properties:
  *               inventory_name:
  *                 type: string
- *                 description: The name of the item (required).
  *               description:
  *                 type: string
- *                 description: A description of the item.
  *               photo:
  *                 type: string
  *                 format: binary
- *                 description: The item's photo file.
  *     responses:
  *       201:
- *         description: Item created successfully.
+ *         description: Item created
  *       400:
- *         description: Bad request, inventory_name is required.
+ *         description: Bad request
+ *       500:
+ *         description: Server error
  */
+app.post("/register", upload.single("photo"), async (req, res) => {
+  try {
+    const { inventory_name, description } = req.body;
+    if (!inventory_name) {
+      return res.status(400).json({ message: "inventory_name required" });
+    }
 
-app.post("/register", upload.single("photo"), (req, res) => {
-  const { inventory_name, description } = req.body;
+    const newId = uuidv4();
+    const photo = req.file ? req.file.filename : null;
 
-  if (!inventory_name) {
-    return res
-      .status(400)
-      .json({ message: "Поле inventory_name є обов'язковим" });
+    await pool.query(
+      "INSERT INTO items (id, inventory_name, description, photo) VALUES (?, ?, ?, ?)",
+      [newId, inventory_name, description || "", photo]
+    );
+
+    res.status(201).json({
+      id: newId,
+      inventory_name,
+      description: description || "",
+      photo,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
-
-  const inventories = readData();
-
-  const newInventory = {
-    id: uuidv4(),
-    inventory_name: inventory_name,
-    description: description || "",
-    photo: req.file ? req.file.filename : null,
-  };
-
-  inventories.push(newInventory);
-  writeData(inventories);
-
-  res.status(201).json(newInventory);
-});
-
-app.all("/register", (req, res) => {
-  res.status(405).json({ message: "Method Not Allowed" });
 });
 
 /**
- * @swagger
+ * @openapi
  * /inventory:
  *   get:
- *     summary: Retrieve a list of all inventory items
- *     tags: [Inventory]
+ *     tags:
+ *       - Inventory
+ *     summary: Get all inventory items
  *     responses:
  *       200:
- *         description: A list of inventory items.
+ *         description: List of items
  *         content:
  *           application/json:
  *             schema:
@@ -157,80 +172,83 @@ app.all("/register", (req, res) => {
  *                     type: string
  *                   photo_url:
  *                     type: string
- *                     format: uri
+ *       500:
+ *         description: Server error
  */
+app.get("/inventory", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM items");
 
-app.get("/inventory", (req, res) => {
-  const allItems = readData();
-  const itemsWithLinks = allItems.map((item) => {
-    return {
+    const result = rows.map((item) => ({
       id: item.id,
       inventory_name: item.inventory_name,
       description: item.description,
       photo_url: item.photo
         ? `${req.protocol}://${req.get("host")}/inventory/${item.id}/photo`
         : null,
-    };
-  });
-  res.status(200).json(itemsWithLinks);
-});
-app.all("/inventory", (req, res) => {
-  res.status(405).json({ message: "Method Not Allowed" });
-});
+    }));
 
-/**
- * @swagger
- * /inventory/{id}:
- *   get:
- *     summary: Get a single inventory item by ID
- *     tags: [Inventory]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: The unique ID of the item.
- *     responses:
- *       200:
- *         description: The inventory item details.
- *       404:
- *         description: Item with the specified ID not found.
- */
-
-app.get("/inventory/:id", (req, res) => {
-  const allItems = readData();
-  id = req.params.id;
-  const findItem = allItems.find((item) => {
-    return item.id === id;
-  });
-  if (findItem) {
-    const itemWithLink = {
-      ...findItem,
-      photo_url: findItem.photo
-        ? `${req.protocol}://${req.get("host")}/inventory/${findItem.id}/photo`
-        : null,
-    };
-    res.status(200).json(itemWithLink);
-  } else {
-    res.status(404).json({ message: "Річ з таким ID не знайдено" });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 /**
- * @swagger
+ * @openapi
  * /inventory/{id}:
- *   put:
- *     summary: Update an item's name or description
- *     tags: [Inventory]
+ *   get:
+ *     tags:
+ *       - Inventory
+ *     summary: Get inventory item by ID
  *     parameters:
- *       - in: path
- *         name: id
+ *       - name: id
+ *         in: path
  *         required: true
  *         schema:
  *           type: string
- *         description: The unique ID of the item.
+ *     responses:
+ *       200:
+ *         description: Item found
+ *       404:
+ *         description: Not found
+ */
+app.get("/inventory/:id", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM items WHERE id = ?", [
+      req.params.id,
+    ]);
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const item = rows[0];
+    item.photo_url = item.photo
+      ? `${req.protocol}://${req.get("host")}/inventory/${item.id}/photo`
+      : null;
+
+    res.json(item);
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/**
+ * @openapi
+ * /inventory/{id}:
+ *   put:
+ *     tags:
+ *       - Inventory
+ *     summary: Update inventory item
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
  *     requestBody:
+ *       required: false
  *       content:
  *         application/json:
  *           schema:
@@ -242,140 +260,150 @@ app.get("/inventory/:id", (req, res) => {
  *                 type: string
  *     responses:
  *       200:
- *         description: Item updated successfully.
+ *         description: Updated
  *       404:
- *         description: Item with the specified ID not found.
+ *         description: Not found
  */
+app.put("/inventory/:id", async (req, res) => {
+  try {
+    const { inventory_name, description } = req.body;
+    const id = req.params.id;
 
-app.put("/inventory/:id", (req, res) => {
-  const allItems = readData();
-  const id = req.params.id;
-  const { inventory_name, description } = req.body;
+    const [exists] = await pool.query("SELECT id FROM items WHERE id = ?", [
+      id,
+    ]);
+    if (!exists.length) {
+      return res.status(404).json({ message: "Not found" });
+    }
 
-  const findIndex = allItems.findIndex((item) => {
-    return item.id === id;
-  });
+    let query = "UPDATE items SET ";
+    const args = [];
 
-  if (findIndex !== -1) {
     if (inventory_name) {
-      allItems[findIndex].inventory_name = inventory_name;
+      query += "inventory_name = ?, ";
+      args.push(inventory_name);
     }
     if (description) {
-      allItems[findIndex].description = description;
+      query += "description = ?, ";
+      args.push(description);
     }
-    writeData(allItems);
-    res.status(200).json(allItems[findIndex]);
-  } else {
-    res.status(404).json({ message: "Річ з таким ID не знайдено" });
+
+    query = query.slice(0, -2) + " WHERE id = ?";
+    args.push(id);
+
+    if (args.length > 1) {
+      await pool.query(query, args);
+    }
+
+    const [rows] = await pool.query("SELECT * FROM items WHERE id = ?", [id]);
+    res.json(rows[0]);
+  } catch {
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 /**
- * @swagger
+ * @openapi
  * /inventory/{id}:
  *   delete:
- *     summary: Delete an inventory item by ID
- *     tags: [Inventory]
+ *     tags:
+ *       - Inventory
+ *     summary: Delete item by ID
  *     parameters:
- *       - in: path
- *         name: id
+ *       - name: id
+ *         in: path
  *         required: true
  *         schema:
  *           type: string
- *         description: The unique ID of the item to delete.
  *     responses:
  *       200:
- *         description: Item deleted successfully.
+ *         description: Deleted
  *       404:
- *         description: Item with the specified ID not found.
+ *         description: Not found
  */
+app.delete("/inventory/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
 
-app.delete("/inventory/:id", (req, res) => {
-  const allItems = readData();
-  const id = req.params.id;
-  const findIndex = allItems.findIndex((item) => {
-    return item.id === id;
-  });
-
-  if (findIndex !== -1) {
-    const itemToDelete = allItems[findIndex];
-    if (itemToDelete.photo) {
-      const pathToPhoto = path.join(options.cache, itemToDelete.photo);
-      fs.unlinkSync(pathToPhoto);
-      console.log("Пов'язане фото видалено:", pathToPhoto);
+    const [rows] = await pool.query("SELECT photo FROM items WHERE id = ?", [
+      id,
+    ]);
+    if (!rows.length) {
+      return res.status(404).json({ message: "Not found" });
     }
-    allItems.splice(findIndex, 1);
-    writeData(allItems);
-    res.status(200).json({ message: "Річ успішно видалено" });
-  } else {
-    res.status(404).json({ message: "Річ з таким ID не знайдено" });
+
+    const photo = rows[0].photo;
+    await pool.query("DELETE FROM items WHERE id = ?", [id]);
+
+    if (photo) {
+      const fullPath = path.join(options.cache, photo);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    }
+
+    res.json({ message: "Deleted" });
+  } catch {
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-app.all("/inventory/:id", (req, res) => {
-  res.status(405).json({ message: "Method Not Allowed" });
-});
-
 /**
- * @swagger
+ * @openapi
  * /inventory/{id}/photo:
  *   get:
- *     summary: Get the photo of a specific item
- *     tags: [Inventory]
+ *     tags:
+ *       - Inventory
+ *     summary: Get item photo
  *     parameters:
- *       - in: path
- *         name: id
+ *       - name: id
+ *         in: path
  *         required: true
  *         schema:
  *           type: string
- *         description: The unique ID of the item.
  *     responses:
  *       200:
- *         description: The item's photo file.
+ *         description: Photo
  *         content:
- *           image/jpeg:
+ *           image/*:
  *             schema:
  *               type: string
  *               format: binary
  *       404:
- *         description: Item or photo not found.
+ *         description: Not found
  */
+app.get("/inventory/:id/photo", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT photo FROM items WHERE id = ?", [
+      req.params.id,
+    ]);
 
-app.get("/inventory/:id/photo", (req, res) => {
-  const allItems = readData();
-  const id = req.params.id;
-  const findItem = allItems.find((item) => {
-    return item.id === id;
-  });
-  if (findItem) {
-    if (findItem.photo) {
-      const photoPath = path.join(__dirname, options.cache, findItem.photo);
-      if (fs.existsSync(photoPath)) {
-        res.sendFile(photoPath);
-      } else {
-        res.status(404).json({ message: "Немає фото" });
-      }
-    } else {
-      res.status(404).json({ message: "Не було завантажено фото" });
+    if (!rows.length || !rows[0].photo) {
+      return res.status(404).json({ message: "Not found" });
     }
-  } else {
-    res.status(404).json({ message: "Річ з таким ID не знайдено" });
+
+    const file = path.join(__dirname, options.cache, rows[0].photo);
+    if (!fs.existsSync(file)) {
+      return res.status(404).json({ message: "Missing file" });
+    }
+
+    res.sendFile(file);
+  } catch {
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 /**
- * @swagger
+ * @openapi
  * /inventory/{id}/photo:
  *   put:
- *     summary: Update the photo of a specific item
- *     tags: [Inventory]
+ *     tags:
+ *       - Inventory
+ *     summary: Update item photo
  *     parameters:
- *       - in: path
- *         name: id
+ *       - name: id
+ *         in: path
  *         required: true
  *         schema:
  *           type: string
- *         description: The unique ID of the item.
  *     requestBody:
  *       required: true
  *       content:
@@ -386,92 +414,99 @@ app.get("/inventory/:id/photo", (req, res) => {
  *               photo:
  *                 type: string
  *                 format: binary
- *                 description: The new photo file.
  *     responses:
  *       200:
- *         description: Photo updated successfully.
+ *         description: Updated
  *       400:
- *         description: No photo file uploaded.
+ *         description: No photo uploaded
  *       404:
- *         description: Item with the specified ID not found.
+ *         description: Not found
  */
-
-app.put("/inventory/:id/photo", upload.single("photo"), (req, res) => {
-  const allItems = readData();
-  const id = req.params.id;
-  if (!req.file) {
-    return res.status(400).json({ message: "Файл фото не було завантажено" });
-  }
-  const findIndex = allItems.findIndex((item) => {
-    return item.id === id;
-  });
-  if (findIndex !== -1) {
-    const oldPhotoName = allItems[findIndex].photo;
-    if (oldPhotoName) {
-      const oldPhotoPath = path.join(options.cache, oldPhotoName);
-      fs.unlinkSync(oldPhotoPath);
-      console.log("Старе фото було видалено:", oldPhotoPath);
+app.put("/inventory/:id/photo", upload.single("photo"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No photo" });
     }
-    allItems[findIndex].photo = req.file.filename;
-    writeData(allItems);
-    res.status(200).json(allItems[findIndex]);
-  } else {
-    res.status(404).json({ message: "Річ з таким ID не знайдено" });
+
+    const id = req.params.id;
+
+    const [rows] = await pool.query("SELECT photo FROM items WHERE id = ?", [
+      id,
+    ]);
+    if (!rows.length) {
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const oldPhoto = rows[0].photo;
+    if (oldPhoto) {
+      const oldPath = path.join(options.cache, oldPhoto);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+
+    await pool.query("UPDATE items SET photo = ? WHERE id = ?", [
+      req.file.filename,
+      id,
+    ]);
+
+    const [updated] = await pool.query("SELECT * FROM items WHERE id = ?", [
+      id,
+    ]);
+    res.json(updated[0]);
+  } catch {
+    res.status(500).json({ message: "Server error" });
   }
-});
-app.all("/inventory/:id/photo", (req, res) => {
-  res.status(405).json({ message: "Method Not Allowed" });
 });
 
 /**
- * @swagger
+ * @openapi
  * /search:
  *   post:
- *     summary: Search for an item by its ID
- *     tags: [Inventory]
+ *     tags:
+ *       - Inventory
+ *     summary: Search item by ID
  *     requestBody:
  *       required: true
  *       content:
- *         application/x-www-form-urlencoded:
+ *         application/json:
  *           schema:
  *             type: object
  *             properties:
  *               id:
  *                 type: string
- *                 description: The ID of the item to find.
  *               has_photo:
  *                 type: boolean
- *                 description: If checked, appends the photo URL to the description.
  *     responses:
  *       200:
- *         description: The found item's information.
+ *         description: Found
  *       404:
- *         description: Item with the specified ID not found.
+ *         description: Not found
  */
+app.post("/search", async (req, res) => {
+  try {
+    const { id, has_photo } = req.body;
 
-app.post("/search", (req, res) => {
-  const allItems = readData();
-  const { id, has_photo } = req.body;
-  const findItem = allItems.find((item) => {
-    return item.id === id;
-  });
-  if (findItem) {
-    let itemToSend = { ...findItem };
-    if (has_photo && itemToSend.photo) {
-      const photoUrl = `${req.protocol}://${req.get("host")}/inventory/${
-        itemToSend.id
-      }/photo`;
-      itemToSend.description = `${itemToSend.description}\nПосилання на фото: ${photoUrl}`;
+    const [rows] = await pool.query("SELECT * FROM items WHERE id = ?", [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "Not found" });
     }
-    res.status(200).json(itemToSend);
-  } else {
-    res.status(404).json({ message: "Річ з таким ID не знайдено" });
+
+    const item = rows[0];
+
+    if (has_photo && item.photo) {
+      const url = `${req.protocol}://${req.get("host")}/inventory/${
+        item.id
+      }/photo`;
+      item.description += `\nPhoto: ${url}`;
+    }
+
+    res.json(item);
+  } catch {
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-app.all("/search", (req, res) => {
-  res.status(405).json({ message: "Method Not Allowed" });
-});
-app.listen(options.port, options.host, () => {
-  console.log(`Server running at http://${options.host}:${options.port}`);
+app.listen(port, options.host, () => {
+  console.log(`Server running at http://${options.host}:${port}`);
 });
